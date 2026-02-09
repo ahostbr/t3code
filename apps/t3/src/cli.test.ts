@@ -25,6 +25,28 @@ describe("parseCliOptions", () => {
     expect(options.webPortLocked).toBe(true);
   });
 
+  it("accepts flexible truthy values for T3_NO_OPEN", () => {
+    const options = parseCliOptions(
+      [],
+      {
+        T3_NO_OPEN: "true",
+      },
+      "/workspace",
+    );
+    expect(options.noOpen).toBe(true);
+  });
+
+  it("treats non-truthy T3_NO_OPEN values as disabled", () => {
+    const options = parseCliOptions(
+      [],
+      {
+        T3_NO_OPEN: "0",
+      },
+      "/workspace",
+    );
+    expect(options.noOpen).toBe(false);
+  });
+
   it("allows command line arguments to override defaults", () => {
     const options = parseCliOptions(
       [

@@ -45,6 +45,15 @@ function parseExplicitPath(value: string, key: string): string {
   return path.resolve(trimmed);
 }
 
+function parseBooleanEnvFlag(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 interface CliOptions {
   backendPort: number;
   webPort: number;
@@ -108,7 +117,7 @@ export function parseCliOptions(
   let webPortLocked = webPortFromEnv.locked;
   let launchCwd = cwd;
   let usedPositionalCwd = false;
-  let noOpen = env.T3_NO_OPEN === "1";
+  let noOpen = parseBooleanEnvFlag(env.T3_NO_OPEN);
   let showHelp = false;
   let showVersion = false;
 
