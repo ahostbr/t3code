@@ -404,4 +404,12 @@ describe("resolveStaticAssetReadTarget", () => {
       kind: "forbidden",
     });
   });
+
+  it("returns not_found when spa fallback file is missing", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3-static-missing-index-"));
+    const result = resolveStaticAssetReadTarget("/missing.js", tempDir);
+    expect(result).toEqual({
+      kind: "not_found",
+    });
+  });
 });

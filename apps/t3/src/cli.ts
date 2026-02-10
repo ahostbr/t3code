@@ -433,7 +433,11 @@ export function resolveStaticAssetReadTarget(
   requestUrl: string | undefined,
   distRoot: string,
   resolvedRealDistRoot?: string,
-): { kind: "file"; filePath: string } | { kind: "forbidden" } | { kind: "bad_request" } {
+):
+  | { kind: "file"; filePath: string }
+  | { kind: "forbidden" }
+  | { kind: "bad_request" }
+  | { kind: "not_found" } {
   const normalizedDistRoot = path.resolve(distRoot);
   const realDistRoot =
     resolvedRealDistRoot ??
@@ -461,7 +465,7 @@ export function resolveStaticAssetReadTarget(
   const indexPath = path.join(normalizedDistRoot, "index.html");
   const indexFile = resolveSafeFilePathInDist(indexPath, realDistRoot);
   if (indexFile.kind !== "file") {
-    return { kind: "bad_request" };
+    return indexFile.kind === "forbidden" ? { kind: "forbidden" } : { kind: "not_found" };
   }
 
   return indexFile;
@@ -492,6 +496,11 @@ function startStaticWebServer(distRoot: string, port: number) {
     if (resolvedPath.kind === "forbidden") {
       response.statusCode = 403;
       response.end("Forbidden");
+      return;
+    }
+    if (resolvedPath.kind === "not_found") {
+      response.statusCode = 404;
+      response.end("Not found");
       return;
     }
 
