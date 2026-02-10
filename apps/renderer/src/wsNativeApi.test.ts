@@ -2219,6 +2219,54 @@ describe("wsNativeApi", () => {
     await expect(request).resolves.toEqual([]);
   });
 
+  it("accepts Uint8Array server messages", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4507");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const request = api.todos.list();
+    const socket = MockWebSocket.instances[0];
+    await waitForCondition(() => (socket?.sentMessages.length ?? 0) > 0);
+    const requestEnvelope = JSON.parse(socket?.sentMessages[0] ?? "{}") as {
+      id: string;
+    };
+    const payload = new TextEncoder().encode(
+      JSON.stringify({
+        type: "response",
+        id: requestEnvelope.id,
+        ok: true,
+        result: [],
+      }),
+    );
+    socket?.emitMessage(payload);
+
+    await expect(request).resolves.toEqual([]);
+  });
+
+  it("accepts DataView server messages", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4508");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const request = api.todos.list();
+    const socket = MockWebSocket.instances[0];
+    await waitForCondition(() => (socket?.sentMessages.length ?? 0) > 0);
+    const requestEnvelope = JSON.parse(socket?.sentMessages[0] ?? "{}") as {
+      id: string;
+    };
+    const payload = new TextEncoder().encode(
+      JSON.stringify({
+        type: "response",
+        id: requestEnvelope.id,
+        ok: true,
+        result: [],
+      }),
+    );
+    socket?.emitMessage(new DataView(payload.buffer));
+
+    await expect(request).resolves.toEqual([]);
+  });
+
   it("accepts blob server messages", async () => {
     setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4407");
     const { getOrCreateWsNativeApi } = await import("./wsNativeApi");

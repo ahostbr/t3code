@@ -363,6 +363,10 @@ class WsNativeApiClient {
       return raw;
     }
 
+    if (ArrayBuffer.isView(raw)) {
+      return textDecoder.decode(raw);
+    }
+
     if (raw instanceof ArrayBuffer) {
       return textDecoder.decode(raw);
     }
