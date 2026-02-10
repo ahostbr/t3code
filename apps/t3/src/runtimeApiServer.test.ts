@@ -325,6 +325,15 @@ describe("runtimeApiServer", () => {
     servers.push(server);
   });
 
+  it("accepts bootstrap timeout at configured lower bound", async () => {
+    const server = await startRuntimeApiServer({
+      port: 0,
+      launchCwd: process.cwd(),
+      bootstrapSessionTimeoutMs: 1,
+    });
+    servers.push(server);
+  });
+
   it("rejects empty auth token configuration", async () => {
     await expect(
       startRuntimeApiServer({
