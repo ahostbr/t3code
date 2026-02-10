@@ -175,6 +175,20 @@ async function main() {
         `Smoke test failed: expected missing asset status 404, received ${missingAsset.status}.`,
       );
     }
+    const postPage = await fetch(parsedAppUrl, {
+      method: "POST",
+      body: "noop",
+    });
+    if (postPage.status !== 405) {
+      throw new Error(`Smoke test failed: expected POST status 405, received ${postPage.status}.`);
+    }
+    if ((postPage.headers.get("allow") ?? "").toLowerCase() !== "get, head") {
+      throw new Error(
+        `Smoke test failed: expected Allow header 'GET, HEAD', got ${String(
+          postPage.headers.get("allow"),
+        )}.`,
+      );
+    }
     const headPage = await fetch(parsedAppUrl, { method: "HEAD" });
     if (headPage.status !== 200) {
       throw new Error(
