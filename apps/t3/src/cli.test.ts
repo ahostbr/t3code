@@ -108,19 +108,24 @@ describe("parseCliOptions", () => {
     expect(options.backendPort).toBe(7001);
     expect(options.webPort).toBe(7002);
     expect(options.noOpen).toBe(true);
-    expect(options.launchCwd).toBe(path.resolve("apps/t3"));
+    expect(options.launchCwd).toBe(path.resolve("/workspace", "apps/t3"));
     expect(options.backendPortLocked).toBe(true);
     expect(options.webPortLocked).toBe(true);
   });
 
   it("accepts a positional cwd argument", () => {
     const options = parseCliOptions(["apps/renderer"], {}, "/workspace");
-    expect(options.launchCwd).toBe(path.resolve("apps/renderer"));
+    expect(options.launchCwd).toBe(path.resolve("/workspace", "apps/renderer"));
   });
 
   it("trims positional cwd arguments before resolving path", () => {
     const options = parseCliOptions(["  apps/renderer  "], {}, "/workspace");
-    expect(options.launchCwd).toBe(path.resolve("apps/renderer"));
+    expect(options.launchCwd).toBe(path.resolve("/workspace", "apps/renderer"));
+  });
+
+  it("resolves relative cwd arguments against provided parser cwd", () => {
+    const options = parseCliOptions(["--cwd", "project"], {}, "/tmp/t3-root");
+    expect(options.launchCwd).toBe(path.resolve("/tmp/t3-root", "project"));
   });
 
   it("rejects whitespace-only positional cwd arguments", () => {
@@ -227,7 +232,7 @@ describe("parseCliOptions", () => {
 
   it("trims cwd flag values before resolving path", () => {
     const options = parseCliOptions(["--cwd", "  apps/renderer  "], {}, "/workspace");
-    expect(options.launchCwd).toBe(path.resolve("apps/renderer"));
+    expect(options.launchCwd).toBe(path.resolve("/workspace", "apps/renderer"));
   });
 
   it("throws for unknown arguments", () => {

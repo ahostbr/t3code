@@ -36,13 +36,13 @@ function parseEnvPort(
   };
 }
 
-function parseExplicitPath(value: string, key: string): string {
+function parseExplicitPath(value: string, key: string, cwd: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
     throw new Error(`Invalid value for ${key}: expected a non-empty path.`);
   }
 
-  return path.resolve(trimmed);
+  return path.resolve(cwd, trimmed);
 }
 
 function parseBooleanEnvFlag(value: string | undefined): boolean {
@@ -170,12 +170,12 @@ export function parseCliOptions(
     }
 
     if (arg.startsWith("--cwd=")) {
-      launchCwd = parseExplicitPath(arg.split("=")[1] ?? "", "--cwd");
+      launchCwd = parseExplicitPath(arg.split("=")[1] ?? "", "--cwd", cwd);
       continue;
     }
 
     if (arg === "--cwd") {
-      launchCwd = parseExplicitPath(readArgValue(argv, index, "--cwd"), "--cwd");
+      launchCwd = parseExplicitPath(readArgValue(argv, index, "--cwd"), "--cwd", cwd);
       index += 1;
       continue;
     }
@@ -184,7 +184,7 @@ export function parseCliOptions(
       if (usedPositionalCwd) {
         throw new Error(`Unexpected positional argument: ${arg}`);
       }
-      launchCwd = parseExplicitPath(arg, "[path]");
+      launchCwd = parseExplicitPath(arg, "[path]", cwd);
       usedPositionalCwd = true;
       continue;
     }
