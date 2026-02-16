@@ -1,4 +1,4 @@
-import { GlobeIcon, MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
+import { GlobeIcon, MonitorIcon, MoonIcon, SunIcon, TerminalIcon, TerminalSquareIcon } from "lucide-react";
 import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,12 +47,7 @@ interface ThreadStatusPill {
   pulse: boolean;
 }
 
-interface TerminalStatusIndicator {
-  label: string;
-  colorClass: string;
-  pulse: boolean;
-  primaryWebPort: number | null;
-}
+
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurnCompletedAt) return false;
@@ -105,7 +100,7 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
   return null;
 }
 
-function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null {
+function terminalStatusIndicator(thread: Thread){
   if (thread.runningTerminalIds.length === 0) {
     return null;
   }
@@ -127,11 +122,6 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
 
   return {
     label,
-    colorClass:
-      runningPorts.length >= 1
-        ? "text-sky-600 dark:text-sky-300/90"
-        : "text-teal-600 dark:text-teal-300/90",
-    pulse: true,
     primaryWebPort: runningPorts[0] ?? null,
   };
 }
@@ -519,9 +509,10 @@ export default function Sidebar() {
                     );
                     const terminalStatus = terminalStatusIndicator(thread);
                     return (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
                           isActive
                             ? "bg-accent text-foreground"
@@ -533,6 +524,14 @@ export default function Sidebar() {
                             threadId: thread.id,
                           })
                         }
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          dispatch({
+                            type: "SET_ACTIVE_THREAD",
+                            threadId: thread.id,
+                          });
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           void handleThreadContextMenu(thread.id, {
@@ -558,52 +557,35 @@ export default function Sidebar() {
                         </div>
                         <div className="ml-2 flex shrink-0 items-center gap-1.5">
                           {terminalStatus && (
-                            <span className="inline-flex items-center">
-                              {terminalStatus.primaryWebPort !== null ? (
-                                <span
-                                  role="link"
-                                  tabIndex={0}
-                                  aria-label={terminalStatus.label}
-                                  title={terminalStatus.label}
-                                  className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                                  onClick={(event) =>
-                                    openWebPort(event, terminalStatus.primaryWebPort!)
-                                  }
-                                  onKeyDown={(event) => {
-                                    if (event.key !== "Enter" && event.key !== " ") return;
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    if (!api) return;
-                                    void api.shell
-                                      .openExternal(
-                                        `http://localhost:${terminalStatus.primaryWebPort!}`,
-                                      )
-                                      .catch(() => undefined);
-                                  }}
-                                >
-                                  <GlobeIcon
-                                    className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                                  />
-                                </span>
-                              ) : (
-                                <span
-                                  role="img"
-                                  aria-label={terminalStatus.label}
-                                  title={terminalStatus.label}
-                                  className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                                >
-                                  <TerminalIcon
-                                    className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                                  />
-                                </span>
-                              )}
-                            </span>
+                            terminalStatus.primaryWebPort !== null ? (
+                              <button
+                                type="button"
+                                aria-label={terminalStatus.label}
+                                title={terminalStatus.label}
+className="inline-flex items-center justify-center rounded p-0.5 text-sky-600 transition-colors hover:bg-accent hover:text-sky-700 dark:text-sky-300/90 dark:hover:text-sky-200"
+                                onClick={(event) => openWebPort(event, terminalStatus.primaryWebPort!)}
+                                onKeyDown={(event) => 
+                                  event.stopPropagation()
+                                }
+                              >
+                                <GlobeIcon className="size-2.5 shrink-0" />
+                              </button>
+                            ) : (
+                              <span
+                                role="img"
+                                aria-label={terminalStatus.label}
+                                title={terminalStatus.label}
+className="inline-flex items-center justify-center text-teal-600 dark:text-teal-300/90"
+                              >
+                                <TerminalSquareIcon className="size-2.5 animate-pulse" />
+                              </span>
+                            )
                           )}
                           <span className="text-[10px] text-muted-foreground/40">
                             {formatRelativeTime(thread.createdAt)}
                           </span>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
 
