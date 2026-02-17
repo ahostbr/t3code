@@ -348,6 +348,12 @@ function inferDesktopPerfTimeoutHint(logChunks) {
   const joined = logChunks.join("");
   const lowered = joined.toLowerCase();
 
+  if (lowered.includes("waiting for bundles") && lowered.includes("outdated:")) {
+    return "Desktop bundles were present but older than desktop source files; dev bundler did not refresh outputs in time.";
+  }
+  if (lowered.includes("waiting for bundles") && lowered.includes("stale:")) {
+    return "Desktop bundles were detected as stale by startup freshness checks.";
+  }
   if (lowered.includes("error while loading shared libraries")) {
     return "Electron failed to start due missing Linux shared libraries.";
   }

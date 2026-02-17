@@ -28,57 +28,165 @@ async function canConnect(host, probePort, timeoutMs = 1_000) {
 
 const f = (p) => path.join(import.meta.dirname, "..", p);
 
-function waitForDesktopBundles(timeoutMs) {
-  const FRESHNESS_GRACE_MS = 10_000;
-  const startedAt = Date.now();
-  const bundleFiles = [
-    { path: f("dist-electron/main.mjs"), requireFresh: true },
-    { path: f("dist-electron/preload.cjs"), requireFresh: true },
-    { path: f("../server/dist/index.mjs"), requireFresh: false },
+function collectFilesRecursively(rootDir) {
+  const files = [];
+
+  const visit = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(fullPath);
+      }
+    }
+  };
+
+  visit(rootDir);
+  return files;
+}
+
+function getDesktopBundleFreshnessFloor() {
+  const sourceFiles = [
+    ...collectFilesRecursively(f("src")),
+    f("tsdown.config.ts"),
+    f("tsconfig.json"),
+    f("package.json"),
   ];
+  let newestMtimeMs = 0;
+
+  for (const sourceFile of sourceFiles) {
+    try {
+      const stat = fs.statSync(sourceFile);
+      newestMtimeMs = Math.max(newestMtimeMs, stat.mtimeMs);
+    } catch {
+      // Best-effort: ignore transient or missing files in the readiness floor.
+    }
+  }
+
+  return {
+    newestMtimeMs,
+    sourceFileCount: sourceFiles.length,
+  };
+}
+
+function inspectBundleFile(bundleFile) {
+  let stat = null;
+  try {
+    stat = fs.statSync(bundleFile.path);
+  } catch {
+    return {
+      ...bundleFile,
+      status: "missing",
+      mtimeMs: null,
+      reason: "not found",
+    };
+  }
+
+  if (bundleFile.freshnessFloorMs > 0 && stat.mtimeMs < bundleFile.freshnessFloorMs) {
+    return {
+      ...bundleFile,
+      status: "outdated",
+      mtimeMs: stat.mtimeMs,
+      reason: `mtime older than source floor by ${Math.round(bundleFile.freshnessFloorMs - stat.mtimeMs)}ms`,
+    };
+  }
+
+  return {
+    ...bundleFile,
+    status: "ready",
+    mtimeMs: stat.mtimeMs,
+    reason: "ok",
+  };
+}
+
+function describeBundleStates(states) {
+  return states
+    .map((state) => {
+      const mtime =
+        typeof state.mtimeMs === "number" ? new Date(state.mtimeMs).toISOString() : "n/a";
+      return `${state.label}=${state.status} (mtime=${mtime}; reason=${state.reason})`;
+    })
+    .join("; ");
+}
+
+function waitForDesktopBundles(timeoutMs) {
+  const startedAt = Date.now();
+  const desktopFloor = getDesktopBundleFreshnessFloor();
+  if (desktopFloor.newestMtimeMs > 0) {
+    console.log(
+      `[dev-electron] desktop bundle freshness floor=${new Date(desktopFloor.newestMtimeMs).toISOString()} from ${desktopFloor.sourceFileCount} source files`,
+    );
+  }
+
+  const bundleFiles = [
+    {
+      path: f("dist-electron/main.mjs"),
+      label: "desktop/main.mjs",
+      freshnessFloorMs: desktopFloor.newestMtimeMs,
+    },
+    {
+      path: f("dist-electron/preload.cjs"),
+      label: "desktop/preload.cjs",
+      freshnessFloorMs: desktopFloor.newestMtimeMs,
+    },
+    {
+      path: f("../server/dist/index.mjs"),
+      label: "server/index.mjs",
+      freshnessFloorMs: 0,
+    },
+  ];
+  let lastProgressLogAt = 0;
 
   return new Promise((resolve, reject) => {
     const tick = () => {
-      const missing = [];
-      const stale = [];
+      const states = bundleFiles.map(inspectBundleFile);
+      const missing = states.filter((state) => state.status === "missing");
+      const outdated = states.filter((state) => state.status === "outdated");
 
-      for (const bundleFile of bundleFiles) {
-        if (!fs.existsSync(bundleFile.path)) {
-          missing.push(bundleFile.path);
-          continue;
-        }
-        if (!bundleFile.requireFresh) {
-          continue;
-        }
-        try {
-          const stat = fs.statSync(bundleFile.path);
-          if (stat.mtimeMs < startedAt - FRESHNESS_GRACE_MS) {
-            stale.push(bundleFile.path);
-          }
-        } catch {
-          missing.push(bundleFile.path);
-        }
-      }
-
-      if (missing.length === 0 && stale.length === 0) {
+      if (missing.length === 0 && outdated.length === 0) {
         resolve();
         return;
       }
 
-      if (Date.now() - startedAt >= timeoutMs) {
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= timeoutMs) {
         const parts = [];
         if (missing.length > 0) {
-          parts.push(`missing: ${missing.join(", ")}`);
+          parts.push(`missing: ${missing.map((state) => state.label).join(", ")}`);
         }
-        if (stale.length > 0) {
-          parts.push(`stale: ${stale.join(", ")}`);
+        if (outdated.length > 0) {
+          parts.push(`outdated: ${outdated.map((state) => state.label).join(", ")}`);
         }
         reject(
           new Error(
-            `[dev-electron] timed out after ${timeoutMs}ms waiting for bundles (${parts.join("; ")})`,
+            `[dev-electron] timed out after ${timeoutMs}ms waiting for bundles (${parts.join("; ")})\n[dev-electron] bundle state: ${describeBundleStates(states)}`,
           ),
         );
         return;
+      }
+
+      if (Date.now() - lastProgressLogAt >= 5_000) {
+        lastProgressLogAt = Date.now();
+        const waitParts = [];
+        if (missing.length > 0) {
+          waitParts.push(`missing=${missing.map((state) => state.label).join(",")}`);
+        }
+        if (outdated.length > 0) {
+          waitParts.push(`outdated=${outdated.map((state) => state.label).join(",")}`);
+        }
+        console.log(
+          `[dev-electron] still waiting for bundles after ${elapsedMs}ms (${waitParts.join("; ")})`,
+        );
       }
 
       setTimeout(tick, 250);
