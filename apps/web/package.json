@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
+    "@pierre/diffs": "^1.0.11",
     "@t3tools/contracts": "workspace:*",
     "@tanstack/react-query": "^5.90.0",
     "@xterm/addon-fit": "^0.11.0",

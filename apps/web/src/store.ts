@@ -40,6 +40,19 @@ type Action =
   | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "TOGGLE_DIFF" }
   | {
+      type: "OPEN_DIFF";
+      threadId: string;
+      turnId?: string;
+      filePath?: string;
+    }
+  | {
+      type: "SET_DIFF_TARGET";
+      threadId: string;
+      turnId?: string;
+      filePath?: string;
+    }
+  | { type: "CLOSE_DIFF" }
+  | {
       type: "APPLY_EVENT";
       event: ProviderEvent;
       activeAssistantItemRef: { current: string | null };
@@ -80,6 +93,9 @@ export interface AppState {
   activeThreadId: string | null;
   runtimeMode: RuntimeMode;
   diffOpen: boolean;
+  diffThreadId: string | null;
+  diffTurnId: string | null;
+  diffFilePath: string | null;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
@@ -100,6 +116,9 @@ const initialState: AppState = {
   activeThreadId: null,
   runtimeMode: DEFAULT_RUNTIME_MODE,
   diffOpen: false,
+  diffThreadId: null,
+  diffTurnId: null,
+  diffFilePath: null,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -117,7 +136,13 @@ function readPersistedState(): AppState {
     const hydrated = hydratePersistedState(raw, !rawCurrent && raw === rawCodethingV1);
     if (!hydrated) return initialState;
 
-    return { ...hydrated, diffOpen: false };
+    return {
+      ...hydrated,
+      diffOpen: false,
+      diffThreadId: null,
+      diffTurnId: null,
+      diffFilePath: null,
+    };
   } catch {
     return initialState;
   }
@@ -681,6 +706,26 @@ export function reducer(state: AppState, action: Action): AppState {
     case "TOGGLE_DIFF":
       return { ...state, diffOpen: !state.diffOpen };
 
+    case "OPEN_DIFF":
+      return {
+        ...state,
+        diffOpen: true,
+        diffThreadId: action.threadId,
+        diffTurnId: action.turnId ?? null,
+        diffFilePath: action.filePath ?? null,
+      };
+
+    case "SET_DIFF_TARGET":
+      return {
+        ...state,
+        diffThreadId: action.threadId,
+        diffTurnId: action.turnId ?? null,
+        diffFilePath: action.filePath ?? null,
+      };
+
+    case "CLOSE_DIFF":
+      return { ...state, diffOpen: false };
+
     case "APPLY_TERMINAL_EVENT":
       if (!state.threads.some((thread) => thread.id === action.event.threadId)) {
         return state;
@@ -865,7 +910,20 @@ export function reducer(state: AppState, action: Action): AppState {
       const threads = state.threads.filter((t) => t.id !== action.threadId);
       const activeThreadId =
         state.activeThreadId === action.threadId ? (threads[0]?.id ?? null) : state.activeThreadId;
-      return { ...state, threads, activeThreadId };
+      const shouldClearDiffTarget = state.diffThreadId === action.threadId;
+      return {
+        ...state,
+        threads,
+        activeThreadId,
+        ...(shouldClearDiffTarget
+          ? {
+              diffOpen: false,
+              diffThreadId: null,
+              diffTurnId: null,
+              diffFilePath: null,
+            }
+          : {}),
+      };
     }
 
     default:
