@@ -17,8 +17,8 @@ import type {
   CommitMessageGenerationResult,
   PrContentGenerationResult,
   TextGenerationService,
-} from "./coreServices";
-import { CodexTextGenerator } from "./codexTextGenerator";
+} from "./generators/interfaces";
+import { CodexTextGenerator } from "./generators/codexTextGenerator";
 import { GitCoreService } from "./git";
 import { type ProcessRunOptions, type ProcessRunResult, runProcess } from "./processRunner";
 

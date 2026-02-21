@@ -9,8 +9,8 @@ import type {
   PrContentGenerationInput,
   PrContentGenerationResult,
   TextGenerationService,
-} from "./coreServices";
-import { type ProcessRunOptions, type ProcessRunResult, runProcess } from "./processRunner";
+} from "./interfaces";
+import { type ProcessRunOptions, type ProcessRunResult, runProcess } from "../processRunner";
 
 type ProcessRunner = (
   command: string,
