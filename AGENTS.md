@@ -41,3 +41,30 @@ Docs:
 - Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
+
+## Cursor Cloud specific instructions
+
+### Prerequisites
+
+- **Bun >= 1.3.9** (package manager; see `packageManager` in root `package.json`).
+- **Node.js >= 24.13.1** (required for `node:sqlite`; see `engines` in root `package.json`).
+- **Codex CLI** on PATH is needed for full E2E agent sessions but is NOT required for dev server startup, lint, typecheck, or tests.
+
+### Key commands
+
+All commands are documented in the root `README.md`. Quick reference:
+
+- `bun install` — install dependencies.
+- `bun run lint` — runs `oxlint` (not ESLint).
+- `bun run typecheck` — Turbo-orchestrated `tsc --noEmit` across all packages.
+- `bun run test` — Turbo-orchestrated Vitest across all packages.
+- `bun run dev` — starts contracts watch-build + server (port 3773) + Vite web (port 5733) via Turbo. Pass `T3CODE_NO_BROWSER=1` to suppress auto-opening a browser.
+- `bun run build` — production build of all packages.
+
+### Gotchas
+
+- The server uses `node:sqlite` (experimental in Node 24). You will see `ExperimentalWarning: SQLite is an experimental feature` in test/server output — this is expected.
+- Dev state is isolated to `~/.t3/dev` by default (set via `T3CODE_STATE_DIR`).
+- `bun run dev` spawns `turbo` under the hood via `scripts/dev-runner.mjs`; the runner resolves dev ports (server 3773, web 5733) and environment variables automatically.
+- `packages/contracts` must be built before `apps/server` or `apps/web` can start. Turbo handles this dependency, but if running individual packages manually, build contracts first: `bun run build:contracts`.
+- Lint uses `oxlint` (config: `.oxlintrc.json`), not ESLint. Formatting uses `oxfmt` (config: `.oxfmtrc.json`).
