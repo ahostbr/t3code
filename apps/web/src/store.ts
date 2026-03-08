@@ -9,9 +9,9 @@ import {
 import {
   getModelOptions,
   normalizeModelSlug,
-  resolveModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
+import { normalizeProviderKind } from "@t3tools/shared/provider";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
 
@@ -41,6 +41,10 @@ const initialState: AppState = {
   threadsHydrated: false,
 };
 const persistedExpandedProjectCwds = new Set<string>();
+const MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claude: new Set(getModelOptions("claude").map((option) => option.slug)),
+};
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -106,13 +110,17 @@ function mapProjectsFromReadModel(
     const existing =
       previous.find((entry) => entry.id === project.id) ??
       previous.find((entry) => entry.cwd === project.workspaceRoot);
+    const provider = inferProviderForModel(project.defaultModel ?? null);
     return {
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
       model:
         existing?.model ??
-        resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
+        resolveModelSlugForProvider(
+          provider,
+          project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER[provider],
+        ),
       expanded:
         existing?.expanded ??
         (persistedExpandedProjectCwds.size > 0
@@ -143,26 +151,28 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
-    return providerName;
+  return normalizeProviderKind(providerName) ?? "codex";
+}
+
+function inferProviderForModel(model: string | null | undefined): ProviderKind {
+  for (const provider of ["codex", "claude"] as const satisfies readonly ProviderKind[]) {
+    const normalizedModel = normalizeModelSlug(model, provider);
+    if (normalizedModel && MODEL_SLUGS_BY_PROVIDER[provider].has(normalizedModel)) {
+      return provider;
+    }
   }
   return "codex";
 }
-
-const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
-    return input.sessionProviderName;
+  const normalizedSessionProvider = normalizeProviderKind(input.sessionProviderName);
+  if (normalizedSessionProvider) {
+    return normalizedSessionProvider;
   }
-  const normalizedCodex = normalizeModelSlug(input.model, "codex");
-  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
-    return "codex";
-  }
-  return "codex";
+  return inferProviderForModel(input.model);
 }
 
 function resolveWsHttpOrigin(): string {

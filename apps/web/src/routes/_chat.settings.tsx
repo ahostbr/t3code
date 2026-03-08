@@ -8,6 +8,14 @@ import { ZapIcon } from "lucide-react";
 import {
   APP_SERVICE_TIER_OPTIONS,
   MAX_CUSTOM_MODEL_LENGTH,
+  getAppBinaryPath,
+  getAppCustomModels,
+  getAppHomePath,
+  getAppServiceTierSetting,
+  getDefaultAppCustomModels,
+  patchAppCustomModels,
+  patchAppProviderPaths,
+  patchAppServiceTier,
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
@@ -54,37 +62,14 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "claude",
+    title: "Claude Code",
+    description: "Save additional Claude model slugs for the picker and `/model` command.",
+    placeholder: "your-claude-model-slug",
+    example: "claude-sonnet-5-beta",
+  },
 ] as const;
-
-function getCustomModelsForProvider(
-  settings: ReturnType<typeof useAppSettings>["settings"],
-  provider: ProviderKind,
-) {
-  switch (provider) {
-    case "codex":
-    default:
-      return settings.customCodexModels;
-  }
-}
-
-function getDefaultCustomModelsForProvider(
-  defaults: ReturnType<typeof useAppSettings>["defaults"],
-  provider: ProviderKind,
-) {
-  switch (provider) {
-    case "codex":
-    default:
-      return defaults.customCodexModels;
-  }
-}
-
-function patchCustomModels(provider: ProviderKind, models: string[]) {
-  switch (provider) {
-    case "codex":
-    default:
-      return { customCodexModels: models };
-  }
-}
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -96,14 +81,13 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    claude: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
 
-  const codexBinaryPath = settings.codexBinaryPath;
-  const codexHomePath = settings.codexHomePath;
-  const codexServiceTier = settings.codexServiceTier;
+  const codexServiceTier = getAppServiceTierSetting(settings, "codex");
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -125,7 +109,7 @@ function SettingsRouteView() {
 
   const addCustomModel = useCallback((provider: ProviderKind) => {
     const customModelInput = customModelInputByProvider[provider];
-    const customModels = getCustomModelsForProvider(settings, provider);
+    const customModels = getAppCustomModels(settings, provider);
     const normalized = normalizeModelSlug(customModelInput, provider);
     if (!normalized) {
       setCustomModelErrorByProvider((existing) => ({
@@ -156,7 +140,7 @@ function SettingsRouteView() {
       return;
     }
 
-    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+    updateSettings(patchAppCustomModels(provider, [...customModels, normalized]));
     setCustomModelInputByProvider((existing) => ({
       ...existing,
       [provider]: "",
@@ -169,8 +153,13 @@ function SettingsRouteView() {
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
-      const customModels = getCustomModelsForProvider(settings, provider);
-      updateSettings(patchCustomModels(provider, customModels.filter((model) => model !== slug)));
+      const customModels = getAppCustomModels(settings, provider);
+      updateSettings(
+        patchAppCustomModels(
+          provider,
+          customModels.filter((model) => model !== slug),
+        ),
+      );
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
@@ -244,59 +233,133 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
+                <h2 className="text-sm font-medium text-foreground">Provider runtimes</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
+                  These overrides apply to new sessions and let you point each provider at a
+                  non-default local CLI install.
                 </p>
               </div>
 
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
+              <div className="space-y-5">
+                {([
+                  {
+                    provider: "codex" as const,
+                    title: "Codex App Server",
+                    binaryLabel: "Codex binary path",
+                    binaryPlaceholder: "codex",
+                    binaryHint: "Leave blank to use codex from your PATH.",
+                    homeLabel: "CODEX_HOME path",
+                    homePlaceholder: "/Users/you/.codex",
+                    homeHint: "Optional custom Codex home/config directory.",
+                    resetLabel: "Reset codex overrides",
+                  },
+                  {
+                    provider: "claude" as const,
+                    title: "Claude Code CLI",
+                    binaryLabel: "Claude binary path",
+                    binaryPlaceholder: "claude",
+                    binaryHint: "Leave blank to use claude from your PATH.",
+                    homeLabel: "CLAUDE_CONFIG_DIR path",
+                    homePlaceholder: "/Users/you/.claude",
+                    homeHint: "Optional custom Claude config directory.",
+                    resetLabel: "Reset Claude overrides",
+                  },
+                ] satisfies ReadonlyArray<{
+                  provider: ProviderKind;
+                  title: string;
+                  binaryLabel: string;
+                  binaryPlaceholder: string;
+                  binaryHint: string;
+                  homeLabel: string;
+                  homePlaceholder: string;
+                  homeHint: string;
+                  resetLabel: string;
+                }>).map((providerSettings) => {
+                  const provider = providerSettings.provider;
+                  const binaryPath = getAppBinaryPath(settings, provider);
+                  const homePath = getAppHomePath(settings, provider);
+                  return (
+                    <div
+                      key={provider}
+                      className="rounded-xl border border-border bg-background/50 p-4"
+                    >
+                      <div className="mb-4">
+                        <h3 className="text-sm font-medium text-foreground">
+                          {providerSettings.title}
+                        </h3>
+                      </div>
 
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
+                      <div className="space-y-4">
+                        <label htmlFor={`${provider}-binary-path`} className="block space-y-1">
+                          <span className="text-xs font-medium text-foreground">
+                            {providerSettings.binaryLabel}
+                          </span>
+                          <Input
+                            id={`${provider}-binary-path`}
+                            value={binaryPath}
+                            onChange={(event) =>
+                              updateSettings(
+                                patchAppProviderPaths(provider, {
+                                  binaryPath: event.target.value,
+                                }),
+                              )
+                            }
+                            placeholder={providerSettings.binaryPlaceholder}
+                            spellCheck={false}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {providerSettings.binaryHint}
+                          </span>
+                        </label>
 
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <p>
-                    Binary source:{" "}
-                    <span className="font-medium text-foreground">{codexBinaryPath || "PATH"}</span>
-                  </p>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
-                      })
-                    }
-                  >
-                    Reset codex overrides
-                  </Button>
-                </div>
+                        <label htmlFor={`${provider}-home-path`} className="block space-y-1">
+                          <span className="text-xs font-medium text-foreground">
+                            {providerSettings.homeLabel}
+                          </span>
+                          <Input
+                            id={`${provider}-home-path`}
+                            value={homePath}
+                            onChange={(event) =>
+                              updateSettings(
+                                patchAppProviderPaths(provider, {
+                                  homePath: event.target.value,
+                                }),
+                              )
+                            }
+                            placeholder={providerSettings.homePlaceholder}
+                            spellCheck={false}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {providerSettings.homeHint}
+                          </span>
+                        </label>
+
+                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <p>
+                            Binary source:{" "}
+                            <span className="font-medium text-foreground">
+                              {binaryPath || "PATH"}
+                            </span>
+                          </p>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() =>
+                              updateSettings(
+                                patchAppProviderPaths(provider, {
+                                  binaryPath: getAppBinaryPath(defaults, provider),
+                                  homePath: getAppHomePath(defaults, provider),
+                                }),
+                              )
+                            }
+                          >
+                            {providerSettings.resetLabel}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
@@ -320,7 +383,7 @@ function SettingsRouteView() {
                     value={codexServiceTier}
                     onValueChange={(value) => {
                       if (!value) return;
-                      updateSettings({ codexServiceTier: value });
+                      updateSettings(patchAppServiceTier("codex", value));
                     }}
                   >
                     <SelectTrigger>
@@ -349,7 +412,7 @@ function SettingsRouteView() {
 
                 {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
                   const provider = providerSettings.provider;
-                  const customModels = getCustomModelsForProvider(settings, provider);
+                  const customModels = getAppCustomModels(settings, provider);
                   const customModelInput = customModelInputByProvider[provider];
                   const customModelError = customModelErrorByProvider[provider] ?? null;
                   return (
@@ -426,9 +489,9 @@ function SettingsRouteView() {
                                 variant="outline"
                                 onClick={() =>
                                   updateSettings(
-                                    patchCustomModels(
+                                    patchAppCustomModels(
                                       provider,
-                                      [...getDefaultCustomModelsForProvider(defaults, provider)],
+                                      [...getDefaultAppCustomModels(defaults, provider)],
                                     ),
                                   )
                                 }

@@ -9,6 +9,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { normalizeProviderKind } from "@t3tools/shared/provider";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -205,10 +206,6 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.effort === null &&
     draft.codexFastMode === false
   );
-}
-
-function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" ? value : null;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -809,9 +806,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const normalizedModel = normalizeModelSlug(model) ?? null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
+          const provider = existing?.provider ?? "codex";
+          const normalizedModel = normalizeModelSlug(model, provider) ?? null;
           if (!existing && normalizedModel === null) {
             return state;
           }

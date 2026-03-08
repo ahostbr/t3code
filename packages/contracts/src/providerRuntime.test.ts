@@ -52,6 +52,29 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.planMarkdown).toBe("# Ship it");
   });
 
+  it("accepts claude raw sources in runtime.error events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "runtime.error",
+      eventId: "event-claude-runtime-error",
+      provider: "claude",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-claude",
+      payload: {
+        message: "Claude CLI exited unexpectedly.",
+      },
+      raw: {
+        source: "claude.cli.result",
+        payload: {
+          type: "result",
+          subtype: "error",
+        },
+      },
+    });
+
+    expect(parsed.provider).toBe("claude");
+    expect(parsed.raw?.source).toBe("claude.cli.result");
+  });
+
   it("decodes user-input.requested with structured questions", () => {
     const parsed = decodeRuntimeEvent({
       type: "user-input.requested",

@@ -2,6 +2,7 @@ export * from "./baseSchemas";
 export * from "./ipc";
 export * from "./terminal";
 export * from "./provider";
+export * from "./providerOptions";
 export * from "./providerRuntime";
 export * from "./model";
 export * from "./ws";

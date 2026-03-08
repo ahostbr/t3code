@@ -34,6 +34,32 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
   });
 
+  it("accepts claude-compatible payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-claude",
+      provider: "claude",
+      cwd: "/tmp/workspace",
+      model: "claude-sonnet-4-6",
+      modelOptions: {
+        claude: {
+          effort: "high",
+        },
+      },
+      runtimeMode: "approval-required",
+      providerOptions: {
+        claude: {
+          binaryPath: "/usr/local/bin/claude",
+          homePath: "/tmp/.claude",
+        },
+      },
+    });
+
+    expect(parsed.provider).toBe("claude");
+    expect(parsed.modelOptions?.claude?.effort).toBe("high");
+    expect(parsed.providerOptions?.claude?.binaryPath).toBe("/usr/local/bin/claude");
+    expect(parsed.providerOptions?.claude?.homePath).toBe("/tmp/.claude");
+  });
+
   it("rejects payloads without runtime mode", () => {
     expect(() =>
       decodeProviderSessionStartInput({
@@ -60,5 +86,20 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.model).toBe("gpt-5.3-codex");
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+  });
+
+  it("accepts claude-scoped model options", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-claude",
+      model: "claude-opus-4-6",
+      modelOptions: {
+        claude: {
+          effort: "medium",
+        },
+      },
+    });
+
+    expect(parsed.model).toBe("claude-opus-4-6");
+    expect(parsed.modelOptions?.claude?.effort).toBe("medium");
   });
 });

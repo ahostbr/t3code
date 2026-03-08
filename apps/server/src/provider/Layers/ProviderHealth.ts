@@ -9,6 +9,7 @@
  * @module ProviderHealthLive
  */
 import type {
+  ProviderKind,
   ServerProviderAuthStatus,
   ServerProviderStatus,
   ServerProviderStatusState,
@@ -25,6 +26,7 @@ import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHe
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
+const CLAUDE_PROVIDER = "claude" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -40,12 +42,12 @@ function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isCommandMissingCause(error: unknown): boolean {
+function isCommandMissingCause(error: unknown, command: string): boolean {
   if (!(error instanceof Error)) return false;
   const lower = error.message.toLowerCase();
   return (
-    lower.includes("command not found: codex") ||
-    lower.includes("spawn codex enoent") ||
+    lower.includes(`command not found: ${command}`) ||
+    lower.includes(`spawn ${command} enoent`) ||
     lower.includes("enoent") ||
     lower.includes("notfound")
   );
@@ -176,10 +178,10 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runProviderCommand = (commandName: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
+    const command = ChildProcess.make(commandName, [...args], {
       shell: process.platform === "win32",
     });
 
@@ -196,6 +198,9 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
 
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
   }).pipe(Effect.scoped);
+
+const runCodexCommand = (args: ReadonlyArray<string>) => runProviderCommand("codex", args);
+const runClaudeCommand = (args: ReadonlyArray<string>) => runProviderCommand("claude", args);
 
 // ── Health check ────────────────────────────────────────────────────
 
@@ -220,7 +225,7 @@ export const checkCodexProviderStatus: Effect.Effect<
       available: false,
       authStatus: "unknown" as const,
       checkedAt,
-      message: isCommandMissingCause(error)
+      message: isCommandMissingCause(error, "codex")
         ? "Codex CLI (`codex`) is not installed or not on PATH."
         : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
     };
@@ -307,14 +312,181 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+function authStatusMessagePrefix(provider: "Codex" | "Claude"): string {
+  return `${provider} CLI is not authenticated.`;
+}
+
+function authUnknownMessagePrefix(provider: "Codex" | "Claude"): string {
+  return `Could not verify ${provider} authentication status.`;
+}
+
+function parseClaudeAuthStatus(result: CommandResult): {
+  readonly status: ServerProviderStatusState;
+  readonly authStatus: ServerProviderAuthStatus;
+  readonly message?: string;
+} {
+  const lowerOutput = `${result.stdout}\n${result.stderr}`.toLowerCase();
+
+  if (
+    lowerOutput.includes("not logged in") ||
+    lowerOutput.includes("login required") ||
+    lowerOutput.includes("authentication required")
+  ) {
+    return {
+      status: "error",
+      authStatus: "unauthenticated",
+      message: `${authStatusMessagePrefix("Claude")} Run \`claude login\` and try again.`,
+    };
+  }
+
+  const trimmed = result.stdout.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const authValue =
+        typeof parsed.loggedIn === "boolean"
+          ? parsed.loggedIn
+          : typeof parsed.authenticated === "boolean"
+            ? parsed.authenticated
+            : extractAuthBoolean(parsed);
+      if (authValue === true) {
+        return { status: "ready", authStatus: "authenticated" };
+      }
+      if (authValue === false) {
+        return {
+          status: "error",
+          authStatus: "unauthenticated",
+          message: `${authStatusMessagePrefix("Claude")} Run \`claude login\` and try again.`,
+        };
+      }
+    } catch {
+      // Fall through to generic parsing below.
+    }
+  }
+
+  if (result.code === 0) {
+    return { status: "ready", authStatus: "authenticated" };
+  }
+
+  const detail = detailFromResult(result);
+  return {
+    status: "warning",
+    authStatus: "unknown",
+    message: detail
+      ? `${authUnknownMessagePrefix("Claude")} ${detail}`
+      : authUnknownMessagePrefix("Claude"),
+  };
+}
+
+function makeUnavailableProviderStatus(input: {
+  readonly provider: ProviderKind;
+  readonly checkedAt: string;
+  readonly message: string;
+}): ServerProviderStatus {
+  return {
+    provider: input.provider,
+    status: "error",
+    available: false,
+    authStatus: "unknown",
+    checkedAt: input.checkedAt,
+    message: input.message,
+  };
+}
+
+export const checkClaudeProviderStatus: Effect.Effect<
+  ServerProviderStatus,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+
+  const versionProbe = yield* runClaudeCommand(["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(versionProbe)) {
+    const error = versionProbe.failure;
+    return makeUnavailableProviderStatus({
+      provider: CLAUDE_PROVIDER,
+      checkedAt,
+      message: isCommandMissingCause(error, "claude")
+        ? "Claude CLI (`claude`) is not installed or not on PATH."
+        : `Failed to execute Claude CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+    });
+  }
+
+  if (Option.isNone(versionProbe.success)) {
+    return makeUnavailableProviderStatus({
+      provider: CLAUDE_PROVIDER,
+      checkedAt,
+      message: "Claude CLI is installed but failed to run. Timed out while running command.",
+    });
+  }
+
+  const version = versionProbe.success.value;
+  if (version.code !== 0) {
+    const detail = detailFromResult(version);
+    return makeUnavailableProviderStatus({
+      provider: CLAUDE_PROVIDER,
+      checkedAt,
+      message: detail
+        ? `Claude CLI is installed but failed to run. ${detail}`
+        : "Claude CLI is installed but failed to run.",
+    });
+  }
+
+  const authProbe = yield* runClaudeCommand(["auth", "status", "--json"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(authProbe)) {
+    const error = authProbe.failure;
+    return {
+      provider: CLAUDE_PROVIDER,
+      status: "warning",
+      available: true,
+      authStatus: "unknown",
+      checkedAt,
+      message:
+        error instanceof Error
+          ? `${authUnknownMessagePrefix("Claude")} ${error.message}.`
+          : authUnknownMessagePrefix("Claude"),
+    };
+  }
+
+  if (Option.isNone(authProbe.success)) {
+    return {
+      provider: CLAUDE_PROVIDER,
+      status: "warning",
+      available: true,
+      authStatus: "unknown",
+      checkedAt,
+      message: `${authUnknownMessagePrefix("Claude")} Timed out while running command.`,
+    };
+  }
+
+  const parsed = parseClaudeAuthStatus(authProbe.success.value);
+  return {
+    provider: CLAUDE_PROVIDER,
+    status: parsed.status,
+    available: true,
+    authStatus: parsed.authStatus,
+    checkedAt,
+    ...(parsed.message ? { message: parsed.message } : {}),
+  } satisfies ServerProviderStatus;
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
     const codexStatus = yield* checkCodexProviderStatus;
+    const claudeStatus = yield* checkClaudeProviderStatus;
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, claudeStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

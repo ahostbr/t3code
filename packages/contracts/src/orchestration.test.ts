@@ -140,6 +140,28 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts claude as an explicit provider in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-claude",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-claude",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.provider, "claude");
+    assert.strictEqual(parsed.model, "claude-sonnet-4-6");
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({
@@ -183,6 +205,33 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
     assert.strictEqual(parsed.provider, "codex");
     assert.strictEqual(parsed.modelOptions?.codex?.reasoningEffort, "high");
     assert.strictEqual(parsed.modelOptions?.codex?.fastMode, true);
+  }),
+);
+
+it.effect("accepts provider-scoped runtime options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-provider-options",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-provider-options",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claude",
+      providerOptions: {
+        claude: {
+          binaryPath: "/usr/local/bin/claude",
+          homePath: "/tmp/.claude",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "claude");
+    assert.strictEqual(parsed.providerOptions?.claude?.binaryPath, "/usr/local/bin/claude");
+    assert.strictEqual(parsed.providerOptions?.claude?.homePath, "/tmp/.claude");
   }),
 );
 

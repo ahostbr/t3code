@@ -6,6 +6,7 @@ import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/s
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+const PROVIDERS: ProviderKind[] = ["codex", "claude"];
 export const APP_SERVICE_TIER_OPTIONS = [
   {
     value: "auto",
@@ -28,13 +29,20 @@ const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claude: new Set(getModelOptions("claude").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
@@ -42,7 +50,13 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  claudeServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customClaudeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -108,7 +122,113 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claude"),
   };
+}
+
+export function getAppBinaryPath(settings: AppSettings, provider: ProviderKind): string {
+  switch (provider) {
+    case "claude":
+      return settings.claudeBinaryPath;
+    case "codex":
+    default:
+      return settings.codexBinaryPath;
+  }
+}
+
+export function getAppHomePath(settings: AppSettings, provider: ProviderKind): string {
+  switch (provider) {
+    case "claude":
+      return settings.claudeHomePath;
+    case "codex":
+    default:
+      return settings.codexHomePath;
+  }
+}
+
+export function getAppServiceTierSetting(
+  settings: Pick<AppSettings, "codexServiceTier" | "claudeServiceTier">,
+  provider: ProviderKind,
+): AppServiceTier {
+  switch (provider) {
+    case "claude":
+      return settings.claudeServiceTier;
+    case "codex":
+    default:
+      return settings.codexServiceTier;
+  }
+}
+
+export function getAppCustomModels(
+  settings: Pick<AppSettings, "customCodexModels" | "customClaudeModels">,
+  provider: ProviderKind,
+): readonly string[] {
+  switch (provider) {
+    case "claude":
+      return settings.customClaudeModels;
+    case "codex":
+    default:
+      return settings.customCodexModels;
+  }
+}
+
+export function patchAppCustomModels(
+  provider: ProviderKind,
+  models: string[],
+): Partial<Pick<AppSettings, "customCodexModels" | "customClaudeModels">> {
+  switch (provider) {
+    case "claude":
+      return { customClaudeModels: models };
+    case "codex":
+    default:
+      return { customCodexModels: models };
+  }
+}
+
+export function patchAppProviderPaths(
+  provider: ProviderKind,
+  patch: {
+    binaryPath?: string;
+    homePath?: string;
+  },
+): Partial<AppSettings> {
+  switch (provider) {
+    case "claude":
+      return {
+        ...(patch.binaryPath !== undefined ? { claudeBinaryPath: patch.binaryPath } : {}),
+        ...(patch.homePath !== undefined ? { claudeHomePath: patch.homePath } : {}),
+      };
+    case "codex":
+    default:
+      return {
+        ...(patch.binaryPath !== undefined ? { codexBinaryPath: patch.binaryPath } : {}),
+        ...(patch.homePath !== undefined ? { codexHomePath: patch.homePath } : {}),
+      };
+  }
+}
+
+export function patchAppServiceTier(
+  provider: ProviderKind,
+  serviceTier: AppServiceTier,
+): Partial<Pick<AppSettings, "codexServiceTier" | "claudeServiceTier">> {
+  switch (provider) {
+    case "claude":
+      return { claudeServiceTier: serviceTier };
+    case "codex":
+    default:
+      return { codexServiceTier: serviceTier };
+  }
+}
+
+export function getDefaultAppCustomModels(
+  defaults: Pick<AppSettings, "customCodexModels" | "customClaudeModels">,
+  provider: ProviderKind,
+): readonly string[] {
+  return getAppCustomModels(defaults, provider);
+}
+
+export function getSupportedProviders(): readonly ProviderKind[] {
+  return PROVIDERS;
 }
 
 export function getAppModelOptions(
