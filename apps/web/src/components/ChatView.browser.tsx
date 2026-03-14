@@ -4,6 +4,7 @@ import "../index.css";
 import {
   ORCHESTRATION_WS_METHODS,
   type MessageId,
+  type OrchestrationThreadActivity,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
@@ -256,6 +257,98 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createActivity(options: {
+  id: string;
+  createdAt: string;
+  kind: string;
+  summary: string;
+  tone: "info" | "tool" | "approval" | "error";
+  payload: unknown;
+}): OrchestrationThreadActivity {
+  return {
+    id: options.id,
+    tone: options.tone,
+    kind: options.kind,
+    summary: options.summary,
+    payload: options.payload,
+    turnId: null,
+    createdAt: options.createdAt,
+  } as OrchestrationThreadActivity;
+}
+
+function createClaudePendingUserInputSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-claude-pending" as MessageId,
+    targetText: "hello buddy can u ask me a random question with askuseraquestion please",
+  });
+  const thread = snapshot.threads[0];
+  if (!thread) {
+    throw new Error("Expected browser fixture thread.");
+  }
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...thread,
+        model: "claude-opus-4.6",
+        messages: [
+          ...thread.messages,
+          createAssistantMessage({
+            id: "msg-assistant-claude-pending" as MessageId,
+            text: "If you could mass-produce one meal and have it taste perfect every time, what would it be?",
+            offsetSeconds: 90,
+          }),
+        ],
+        activities: [
+          createActivity({
+            id: "activity-user-input-open",
+            createdAt: isoAt(91),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-user-input-claude-1",
+              questions: [
+                {
+                  id: "dream_meal",
+                  header: "DREAM MEAL",
+                  question:
+                    "If you could mass-produce one meal and have it taste perfect every time, what would it be?",
+                  options: [
+                    {
+                      label: "Pizza",
+                      description: "Reliable infinite topping combinations",
+                    },
+                    {
+                      label: "Sushi",
+                      description: "Precise and clean every single time",
+                    },
+                    {
+                      label: "Tacos",
+                      description: "Flexible and fast without getting boring",
+                    },
+                    {
+                      label: "Ramen",
+                      description: "Deep flavor with comfort-food consistency",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ],
+        session: thread.session
+          ? {
+              ...thread.session,
+              providerName: "claude",
+            }
+          : thread.session,
+      },
+    ],
+  };
+}
+
 function resolveWsRpc(tag: string): unknown {
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
@@ -406,6 +499,26 @@ async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Pro
         (button) => button.textContent?.trim() === expectedLabel,
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
+  );
+}
+
+async function waitForButtonByLabel(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === label,
+      ) as HTMLButtonElement | null,
+    `Unable to find button with label "${label}".`,
+  );
+}
+
+async function waitForTextContent(text: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>("body *")).find((element) =>
+        element.textContent?.includes(text),
+      ) ?? null,
+    `Unable to find text "${text}".`,
   );
 }
 
@@ -863,6 +976,109 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears the Claude pending-question card after answers are submitted and resolved", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createClaudePendingUserInputSnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "ready",
+              available: true,
+              authStatus: "authenticated",
+              checkedAt: NOW_ISO,
+            },
+            {
+              provider: "claude",
+              status: "ready",
+              available: true,
+              authStatus: "authenticated",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForTextContent("1/1 DREAM MEAL");
+      await waitForTextContent("what would it be?");
+      await page.screenshot({
+        path: "src/components/__screenshots__/claude-user-input-01-open.png",
+      });
+
+      const pizzaButton = await waitForButtonByLabel("Pizza");
+      pizzaButton.click();
+      await waitForLayout();
+
+      const submitButton = await waitForButtonByLabel("Submit answers");
+      expect(submitButton.hasAttribute("disabled")).toBe(false);
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          const request = wsRequests.find(
+            (entry) =>
+              entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof entry.command === "object" &&
+              entry.command !== null &&
+              "type" in entry.command &&
+              entry.command.type === "thread.user-input.respond",
+          );
+          expect(request).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useStore.setState((state) => ({
+        ...state,
+        threads: state.threads.map((thread) =>
+          thread.id !== THREAD_ID
+            ? thread
+            : {
+                ...thread,
+                activities: [
+                  ...thread.activities,
+                  createActivity({
+                    id: "activity-user-input-resolved",
+                    createdAt: isoAt(92),
+                    kind: "user-input.resolved",
+                    summary: "User input submitted",
+                    tone: "info",
+                    payload: {
+                      requestId: "req-user-input-claude-1",
+                      answers: {
+                        dream_meal: "Pizza",
+                      },
+                    },
+                  }),
+                ],
+              },
+        ),
+      }));
+
+      await vi.waitFor(
+        () => {
+          expect(
+            Array.from(document.querySelectorAll("body *")).some((element) =>
+              element.textContent?.includes("1/1 DREAM MEAL"),
+            ),
+          ).toBe(false);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.screenshot({
+        path: "src/components/__screenshots__/claude-user-input-02-resolved.png",
+      });
     } finally {
       await mounted.cleanup();
     }

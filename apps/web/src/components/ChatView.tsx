@@ -14,6 +14,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
+  type ServerClaudeSlashEntry,
   type ServerProviderStatus,
   type ProviderKind,
   type ThreadId,
@@ -263,6 +264,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+const EMPTY_CLAUDE_SLASH_ENTRIES: ServerClaudeSlashEntry[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
@@ -419,6 +421,14 @@ type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "claude-slash";
+      slashKind: ServerClaudeSlashEntry["kind"];
+      prompt: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "model";
       provider: ProviderKind;
       model: ModelSlug;
@@ -499,17 +509,66 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   );
 });
 
+const ClaudeSlashEntryIcon = memo(function ClaudeSlashEntryIcon(props: {
+  kind: "command" | "skill";
+}) {
+  if (props.kind === "skill") {
+    return (
+      <img
+        src="/claude-skill-icon.png"
+        alt=""
+        aria-hidden="true"
+        className="mt-0.5 size-5 shrink-0 rounded-md border border-amber-500/30 object-cover shadow-[0_0_0_1px_rgba(255,255,255,0.03)]"
+        loading="lazy"
+      />
+    );
+  }
+
+  return (
+    <Badge
+      variant="outline"
+      className="mt-0.5 shrink-0 px-1.5 py-0 text-[10px] uppercase tracking-[0.14em]"
+    >
+      cmd
+    </Badge>
+  );
+});
+
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
   resolvedTheme: "light" | "dark";
   isActive: boolean;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const leading = (() => {
+    if (props.item.type === "path") {
+      return (
+        <VscodeEntryIcon
+          pathValue={props.item.path}
+          kind={props.item.pathKind}
+          theme={props.resolvedTheme}
+          className="mt-0.5"
+        />
+      );
+    }
+    if (props.item.type === "slash-command") {
+      return <BotIcon className="mt-0.5 size-4 text-muted-foreground/80" />;
+    }
+    if (props.item.type === "claude-slash") {
+      return <ClaudeSlashEntryIcon kind={props.item.slashKind} />;
+    }
+    return (
+      <Badge variant="outline" className="mt-0.5 shrink-0 px-1.5 py-0 text-[10px]">
+        model
+      </Badge>
+    );
+  })();
+
   return (
     <CommandItem
       value={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2",
+        "cursor-pointer select-none items-start gap-3 px-3 py-2",
         props.isActive && "bg-accent text-accent-foreground",
       )}
       onMouseDown={(event) => {
@@ -519,28 +578,20 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         props.onSelect(props.item);
       }}
     >
-      {props.item.type === "path" ? (
-        <VscodeEntryIcon
-          pathValue={props.item.path}
-          kind={props.item.pathKind}
-          theme={props.resolvedTheme}
-        />
-      ) : null}
-      {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 text-muted-foreground/80" />
-      ) : null}
-      {props.item.type === "model" ? (
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-          model
-        </Badge>
-      ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        {props.item.type === "model" && props.item.showFastBadge ? (
-          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-        ) : null}
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      {leading}
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {props.item.type === "model" && props.item.showFastBadge ? (
+            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+          ) : null}
+          <span className="line-clamp-2 break-all font-medium leading-snug">
+            {props.item.label}
+          </span>
+        </div>
+        <p className="line-clamp-1 break-words text-muted-foreground/60 text-[11px] leading-relaxed">
+          {props.item.description}
+        </p>
+      </div>
     </CommandItem>
   );
 });
@@ -1203,6 +1254,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
+  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const claudeSlashEntries = serverConfigQuery.data?.claudeSlashEntries ?? EMPTY_CLAUDE_SLASH_ENTRIES;
+  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1249,12 +1304,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: "Switch this thread back to normal chat mode",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const claudePromptItems =
+        selectedProvider === "claude"
+          ? claudeSlashEntries.map((entry) => ({
+              id: `claude-slash:${entry.kind}:${entry.prompt}`,
+              type: "claude-slash" as const,
+              slashKind: entry.kind,
+              prompt: entry.prompt,
+              label: entry.prompt,
+              description:
+                entry.description ??
+                (entry.kind === "command"
+                  ? `Claude command · ${entry.name}`
+                  : `Claude skill · ${entry.name}`),
+            }))
+          : [];
+      const combinedItems =
+        selectedProvider === "claude"
+          ? [...claudePromptItems, ...slashCommandItems]
+          : [...slashCommandItems];
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return combinedItems;
       }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      return combinedItems.filter(
+        (item) =>
+          item.label.slice(1).toLowerCase().includes(query) ||
+          item.description.toLowerCase().includes(query) ||
+          (item.type === "slash-command" && item.command.includes(query)),
       );
     }
 
@@ -1276,7 +1353,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         showFastBadge:
           provider === "codex" && shouldShowFastTierIcon(slug, selectedServiceTierSetting),
       }));
-  }, [composerTrigger, searchableModelOptions, selectedServiceTierSetting, workspaceEntries]);
+  }, [
+    claudeSlashEntries,
+    composerTrigger,
+    searchableModelOptions,
+    selectedProvider,
+    selectedServiceTierSetting,
+    workspaceEntries,
+  ]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1292,9 +1376,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => new Set(nonPersistedComposerImageIds),
     [nonPersistedComposerImageIds],
   );
-  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
-  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
@@ -3241,6 +3322,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "claude-slash") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${item.prompt} `,
+          {
+            expectedText: expectedToken,
+          },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: expectedToken,
@@ -3389,7 +3484,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {!isElectron && (
-          <header className="border-b border-border px-3 py-2 md:hidden">
+          <header className="border-b border-border px-3 py-2">
             <div className="flex items-center gap-2">
               <SidebarTrigger className="size-7 shrink-0" />
               <span className="text-sm font-medium text-foreground">Threads</span>
@@ -3397,7 +3492,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </header>
         )}
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div className="drag-region flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-5">
+            <SidebarTrigger className="size-7 shrink-0" />
             <span className="text-xs text-muted-foreground/50">No active thread</span>
           </div>
         )}
@@ -4040,7 +4136,7 @@ const ChatHeader = memo(function ChatHeader({
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <SidebarTrigger className="size-7 shrink-0" />
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
@@ -5120,7 +5216,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                  <pre className="m-0 whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
                     {row.message.text}
                   </pre>
                 )}

@@ -56,7 +56,6 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarSeparator,
-  SidebarTrigger,
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
@@ -977,7 +976,6 @@ export default function Sidebar() {
 
   const wordmark = (
     <div className="flex items-center gap-2">
-      <SidebarTrigger className="shrink-0 md:hidden" />
       <div className="flex min-w-0 flex-1 items-center gap-1 mt-2 ml-1">
         <T3Wordmark />
         <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">

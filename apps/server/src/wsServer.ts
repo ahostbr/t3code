@@ -73,6 +73,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { readClaudeSlashEntries, type ClaudeSlashEntry } from "./claudeSlashEntries.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -269,6 +270,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
+  const claudeSlashEntries = yield* readClaudeSlashEntries.pipe(
+    Effect.orElseSucceed(() => [] as Array<ClaudeSlashEntry>),
+  );
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -885,6 +889,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          ...(claudeSlashEntries.length > 0 ? { claudeSlashEntries } : {}),
         };
 
       case WS_METHODS.serverUpsertKeybinding: {

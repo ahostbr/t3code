@@ -69,6 +69,7 @@ interface ClaudeContentBlockState {
   readonly toolUseId?: string;
   readonly toolName?: string;
   inputJson: string;
+  requestId?: RuntimeRequestId;
 }
 
 interface ClaudeMessageState {
@@ -136,6 +137,10 @@ function makeProviderItemId(value: string): ProviderItemId {
 
 function makeRequestId(value: string): RuntimeRequestId {
   return RuntimeRequestId.makeUnsafe(value);
+}
+
+function makeUserInputRequestId(toolUseId: string): RuntimeRequestId {
+  return makeRequestId(`claude:user-input:${toolUseId}`);
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -222,8 +227,14 @@ function toolNameToItemType(toolName: string): CanonicalItemType {
   }
 }
 
+function shouldSurfaceToolLifecycle(toolName: string): boolean {
+  return toolName !== "AskUserQuestion";
+}
+
 function toolNameToRequestType(toolName: string): CanonicalRequestType {
   switch (toolName) {
+    case "AskUserQuestion":
+      return "tool_user_input";
     case "Bash":
       return "exec_command_approval";
     case "Write":
@@ -360,6 +371,9 @@ function extractToolResultText(value: unknown): string {
       .map((entry) => {
         if (typeof entry === "string") return entry;
         const record = asObject(entry);
+        if (asString(record?.type) === "tool_reference") {
+          return asString(record?.tool_name) ?? JSON.stringify(entry);
+        }
         return asString(record?.text) ?? asString(record?.content) ?? JSON.stringify(entry);
       })
       .join("\n");
@@ -368,6 +382,76 @@ function extractToolResultText(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value ?? "");
+}
+
+function toClaudeUserInputQuestions(value: unknown) {
+  const record = asObject(value);
+  const questions = asArray(record?.questions);
+  if (!questions) {
+    return undefined;
+  }
+
+  const parsed = questions
+    .map((entry, index) => {
+      const question = asObject(entry);
+      if (!question) {
+        return undefined;
+      }
+      const prompt = asString(question.question)?.trim();
+      if (!prompt) {
+        return undefined;
+      }
+      const options = (asArray(question.options) ?? [])
+        .map((option) => {
+          const optionRecord = asObject(option);
+          if (!optionRecord) {
+            return undefined;
+          }
+          const label = asString(optionRecord.label)?.trim();
+          const description =
+            asString(optionRecord.description)?.trim() ?? label;
+          if (!label || !description) {
+            return undefined;
+          }
+          return {
+            label,
+            description,
+          };
+        })
+        .filter(
+          (
+            option,
+          ): option is {
+            label: string;
+            description: string;
+          } => option !== undefined,
+        );
+      if (options.length === 0) {
+        return undefined;
+      }
+
+      const id = asString(question.id)?.trim() || String(index);
+      const header = asString(question.header)?.trim() || `Question ${index + 1}`;
+
+      return {
+        id,
+        header,
+        question: prompt,
+        options,
+      };
+    })
+    .filter(
+      (
+        question,
+      ): question is {
+        id: string;
+        header: string;
+        question: string;
+        options: Array<{ label: string; description: string }>;
+      } => question !== undefined,
+    );
+
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
@@ -441,6 +525,84 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
         updatedAt: nowIso(),
       };
       return thread.session;
+    };
+
+    const maybeEmitAskUserQuestionRequest = (
+      thread: ClaudeThreadState,
+      turn: ClaudeTurnState,
+      block: ClaudeContentBlockState,
+      input: unknown,
+      rawPayload: unknown,
+    ): void => {
+      if (block.toolName !== "AskUserQuestion" || !block.toolUseId || block.requestId) {
+        return;
+      }
+      const questions = toClaudeUserInputQuestions(input);
+      if (!questions) {
+        return;
+      }
+
+      const requestId = makeUserInputRequestId(block.toolUseId);
+      block.requestId = requestId;
+      offerEvent(
+        buildRuntimeEvent(
+          buildBase({
+            threadId: thread.threadId,
+            turnId: turn.turnId,
+            requestId,
+            providerRefs: {
+              providerTurnId: turn.turnId,
+              providerRequestId: block.toolUseId,
+            },
+            raw: {
+              source: "claude.cli.assistant",
+              method: "AskUserQuestion",
+              payload: rawPayload,
+            },
+          }),
+          "user-input.requested",
+          {
+            questions,
+          },
+        ),
+      );
+    };
+
+    const emitAskUserQuestionFromPermissionDenial = (
+      thread: ClaudeThreadState,
+      turn: ClaudeTurnState,
+      input: unknown,
+      toolUseId: string,
+      rawPayload: unknown,
+    ): boolean => {
+      const questions = toClaudeUserInputQuestions(input);
+      if (!questions) {
+        return false;
+      }
+      const requestId = makeUserInputRequestId(toolUseId);
+      offerEvent(
+        buildRuntimeEvent(
+          buildBase({
+            threadId: thread.threadId,
+            turnId: turn.turnId,
+            requestId,
+            providerRefs: {
+              providerTurnId: turn.turnId,
+              providerRequestId: toolUseId,
+            },
+            raw: {
+              source: "claude.cli.result",
+              method: "AskUserQuestion",
+              payload: rawPayload,
+            },
+          }),
+          "user-input.requested",
+          {
+            questions,
+          },
+        ),
+      );
+      return true;
     };
 
     const finalizeMessageItems = (thread: ClaudeThreadState, turn: ClaudeTurnState): void => {
@@ -528,6 +690,9 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
           (candidate) => candidate.toolUseId === toolUseId,
         );
         const toolName = toolState?.toolName ?? "Tool";
+        if (!shouldSurfaceToolLifecycle(toolName)) {
+          continue;
+        }
         const itemType = toolNameToItemType(toolName);
         const itemId = toolState?.itemId ?? makeItemId(`claude:item:tool:${toolUseId}`);
         const resultText = extractToolResultText(record.content);
@@ -649,36 +814,44 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
         if (type === "tool_use") {
           const toolUseId = asString(block?.id) ?? `toolu_${randomUUID()}`;
           const toolName = asString(block?.name) ?? "Tool";
-          const itemId = makeItemId(`claude:item:tool:${toolUseId}`);
-          const itemType = toolNameToItemType(toolName);
-          offerEvent(
-            buildRuntimeEvent(
-              buildBase({
-                threadId: thread.threadId,
-                turnId: turn.turnId,
-                itemId,
-                providerRefs: {
-                  providerTurnId: turn.turnId,
-                  providerItemId: makeProviderItemId(toolUseId),
+          const itemId = shouldSurfaceToolLifecycle(toolName)
+            ? makeItemId(`claude:item:tool:${toolUseId}`)
+            : undefined;
+          if (itemId) {
+            const itemType = toolNameToItemType(toolName);
+            offerEvent(
+              buildRuntimeEvent(
+                buildBase({
+                  threadId: thread.threadId,
+                  turnId: turn.turnId,
+                  itemId,
+                  providerRefs: {
+                    providerTurnId: turn.turnId,
+                    providerItemId: makeProviderItemId(toolUseId),
+                  },
+                }),
+                "item.started",
+                {
+                  itemType,
+                  status: "inProgress",
+                  ...(itemTitle(itemType, toolName) ? { title: itemTitle(itemType, toolName) } : {}),
+                  detail: toolName,
                 },
-              }),
-              "item.started",
-              {
-                itemType,
-                status: "inProgress",
-                ...(itemTitle(itemType, toolName) ? { title: itemTitle(itemType, toolName) } : {}),
-                detail: toolName,
-              },
-            ),
-          );
+              ),
+            );
+          }
           turn.contentBlocks.set(index, {
             index,
             type,
-            itemId,
+            ...(itemId ? { itemId } : {}),
             toolUseId,
             toolName,
             inputJson: JSON.stringify(block?.input ?? {}),
           });
+          const blockState = turn.contentBlocks.get(index);
+          if (blockState) {
+            maybeEmitAskUserQuestionRequest(thread, turn, blockState, block?.input, line);
+          }
         }
         return;
       }
@@ -738,6 +911,19 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
         }
         if (deltaType === "input_json_delta" && block) {
           block.inputJson += asString(delta.partial_json) ?? "";
+          if (block.toolName === "AskUserQuestion") {
+            try {
+              maybeEmitAskUserQuestionRequest(
+                thread,
+                turn,
+                block,
+                JSON.parse(block.inputJson),
+                line,
+              );
+            } catch {
+              // Wait for the cumulative partial JSON to become valid.
+            }
+          }
         }
         return;
       }
@@ -767,12 +953,31 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
       const state = turn.interrupted ? "interrupted" : isError ? "failed" : "completed";
 
       const permissionDenials = asArray(result.permission_denials) ?? [];
-      if (permissionDenials.length > 0 && looksLikePermissionPrompt(turn.latestAssistantText)) {
+      if (permissionDenials.length > 0) {
+        const shouldProcessStandardPermissionDenials = looksLikePermissionPrompt(
+          turn.latestAssistantText,
+        );
         for (const denial of permissionDenials) {
           const record = asObject(denial);
           const toolUseId = asString(record?.tool_use_id);
           const toolName = asString(record?.tool_name);
           if (!record || !toolUseId || !toolName) {
+            continue;
+          }
+          if (toolName === "AskUserQuestion") {
+            if (
+              emitAskUserQuestionFromPermissionDenial(
+                thread,
+                turn,
+                record.tool_input,
+                toolUseId,
+                result,
+              )
+            ) {
+              continue;
+            }
+          }
+          if (!shouldProcessStandardPermissionDenials) {
             continue;
           }
           const requestId = makeRequestId(`claude:request:${toolUseId}`);
@@ -1078,11 +1283,6 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
       ];
       if (thread.snapshots.length > 0 || thread.session.resumeCursor) {
         args.push("--resume", thread.cliSessionId);
-        const resumeCursor = decodeResumeCursor(thread.session.resumeCursor);
-        const resumeAt = resumeCursor?.assistantMessageId ?? thread.latestAssistantMessageId;
-        if (resumeAt) {
-          args.push("--resume-session-at", resumeAt);
-        }
       } else {
         args.push("--session-id", thread.cliSessionId);
       }
@@ -1404,7 +1604,7 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
 
     const respondToUserInput: ClaudeAdapterShape["respondToUserInput"] = (
       threadId,
-      _requestId,
+      requestId,
       answers,
     ) =>
       Effect.try({
@@ -1421,9 +1621,13 @@ const makeClaudeAdapter = (options?: ClaudeAdapterLiveOptions) =>
             });
           }
           offerEvent(
-            buildRuntimeEvent(buildBase({ threadId }), "user-input.resolved", {
-              answers,
-            }),
+            buildRuntimeEvent(
+              buildBase({ threadId, requestId: makeRequestId(requestId) }),
+              "user-input.resolved",
+              {
+                answers,
+              },
+            ),
           );
           spawnTurn(thread, {
             prompt: [

@@ -56,6 +56,18 @@ describe("detectComposerTrigger", () => {
       rangeEnd: text.length,
     });
   });
+
+  it("keeps slash command suggestions open for provider-defined commands", () => {
+    const text = "/daily";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "daily",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
 });
 
 describe("replaceTextRange", () => {
