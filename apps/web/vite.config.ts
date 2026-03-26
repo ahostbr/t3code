@@ -50,6 +50,9 @@ export default defineConfig({
       protocol: "ws",
       host: "localhost",
     },
+    watch: {
+      ignored: ["**/.worktrees/**"],
+    },
   },
   build: {
     outDir: "dist",

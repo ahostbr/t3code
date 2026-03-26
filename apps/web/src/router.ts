@@ -8,7 +8,17 @@ import { StoreProvider } from "./store";
 type RouterHistory = NonNullable<Parameters<typeof createRouter>[0]["history"]>;
 
 export function getRouter(history: RouterHistory) {
-  const queryClient = new QueryClient();
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        // Retry failed queries (backend may not be ready on first load)
+        retry: 3,
+        retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
+        // Refetch on window focus to pick up missed updates
+        refetchOnWindowFocus: true,
+      },
+    },
+  });
 
   return createRouter({
     routeTree,
