@@ -75,6 +75,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { readClaudeSlashEntries, type ClaudeSlashEntry } from "./claudeSlashEntries.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
@@ -257,6 +258,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+
+  const claudeSlashEntries = yield* readClaudeSlashEntries.pipe(
+    Effect.orElseSucceed(() => [] as Array<ClaudeSlashEntry>),
+  );
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -875,6 +880,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          ...(claudeSlashEntries.length > 0 ? { claudeSlashEntries } : {}),
         };
 
       case WS_METHODS.serverUpsertKeybinding: {

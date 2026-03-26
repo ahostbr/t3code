@@ -45,6 +45,20 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const ServerClaudeSlashEntryKind = Schema.Literals(["command", "skill"]);
+export type ServerClaudeSlashEntryKind = typeof ServerClaudeSlashEntryKind.Type;
+
+export const ServerClaudeSlashEntry = Schema.Struct({
+  kind: ServerClaudeSlashEntryKind,
+  name: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerClaudeSlashEntry = typeof ServerClaudeSlashEntry.Type;
+
+const ServerClaudeSlashEntries = Schema.Array(ServerClaudeSlashEntry);
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
@@ -52,6 +66,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  claudeSlashEntries: Schema.optional(ServerClaudeSlashEntries),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

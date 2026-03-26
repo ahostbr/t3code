@@ -1,4 +1,4 @@
-import { type ProjectEntry, type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ProjectEntry, type ModelSlug, type ProviderKind, type ServerClaudeSlashEntry } from "@t3tools/contracts";
 import { memo } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
@@ -20,6 +20,14 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "claude-slash";
+      slashKind: ServerClaudeSlashEntry["kind"];
+      prompt: string;
       label: string;
       description: string;
     }
@@ -87,6 +95,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       value={props.item.id}
       className={cn(
         "cursor-pointer select-none gap-2",
+        props.item.type === "claude-slash" && "items-start gap-3 px-3 py-2",
         props.isActive && "bg-accent text-accent-foreground",
       )}
       onMouseDown={(event) => {
@@ -106,15 +115,43 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 text-muted-foreground/80" />
       ) : null}
+      {props.item.type === "claude-slash" ? (
+        props.item.slashKind === "skill" ? (
+          <img
+            src="/claude-skill-icon.png"
+            alt=""
+            aria-hidden="true"
+            className="size-5 shrink-0 rounded-md border border-amber-500/30 object-cover shadow-[0_0_0_1px_rgba(255,255,255,0.03)]"
+            loading="lazy"
+          />
+        ) : (
+          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] uppercase tracking-[0.14em]">
+            cmd
+          </Badge>
+        )
+      ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      {props.item.type === "claude-slash" ? (
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="line-clamp-2 break-all font-medium leading-snug">
+            {props.item.label}
+          </span>
+          <p className="line-clamp-1 break-words text-muted-foreground/60 text-[11px] leading-relaxed">
+            {props.item.description}
+          </p>
+        </div>
+      ) : (
+        <>
+          <span className="flex min-w-0 items-center gap-1.5 truncate">
+            <span className="truncate">{props.item.label}</span>
+          </span>
+          <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+        </>
+      )}
     </CommandItem>
   );
 });

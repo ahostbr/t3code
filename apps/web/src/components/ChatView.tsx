@@ -17,6 +17,7 @@ import {
   type TurnId,
   type EditorId,
   type KeybindingCommand,
+  type ServerClaudeSlashEntry,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
@@ -187,6 +188,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+const EMPTY_CLAUDE_SLASH_ENTRIES: ServerClaudeSlashEntry[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
@@ -1015,6 +1017,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const claudeSlashEntries = serverConfigQuery.data?.claudeSlashEntries ?? EMPTY_CLAUDE_SLASH_ENTRIES;
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1061,12 +1064,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: "Switch this thread back to normal chat mode",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const claudePromptItems =
+        selectedProvider === "claudeAgent"
+          ? claudeSlashEntries.map((entry) => ({
+              id: `claude-slash:${entry.kind}:${entry.prompt}`,
+              type: "claude-slash" as const,
+              slashKind: entry.kind,
+              prompt: entry.prompt,
+              label: entry.prompt,
+              description:
+                entry.description ??
+                (entry.kind === "command"
+                  ? `Claude command · ${entry.name}`
+                  : `Claude skill · ${entry.name}`),
+            }))
+          : [];
+      const combinedItems =
+        selectedProvider === "claudeAgent"
+          ? [...claudePromptItems, ...slashCommandItems]
+          : [...slashCommandItems];
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return combinedItems;
       }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      return combinedItems.filter(
+        (item) => {
+          if (item.type === "claude-slash") {
+            return item.prompt.toLowerCase().includes(query) || item.label.slice(1).toLowerCase().includes(query);
+          }
+          return item.command.includes(query) || item.label.slice(1).includes(query);
+        },
       );
     }
 
@@ -1086,7 +1113,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [claudeSlashEntries, composerTrigger, searchableModelOptions, selectedProvider, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -3246,6 +3273,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           replacementRangeEnd,
           replacement,
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "claude-slash") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${item.prompt} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
